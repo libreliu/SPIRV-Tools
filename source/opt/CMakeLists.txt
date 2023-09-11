@@ -64,6 +64,7 @@ set(SPIRV_TOOLS_OPT_SOURCES
   inline_exhaustive_pass.h
   inline_opaque_pass.h
   inline_pass.h
+  inst_basic_block_trace_pass.h
   inst_bindless_check_pass.h
   inst_buff_addr_check_pass.h
   inst_debug_printf_pass.h
@@ -182,6 +183,7 @@ set(SPIRV_TOOLS_OPT_SOURCES
   inline_exhaustive_pass.cpp
   inline_opaque_pass.cpp
   inline_pass.cpp
+  inst_basic_block_trace_pass.cpp
   inst_bindless_check_pass.cpp
   inst_buff_addr_check_pass.cpp
   inst_debug_printf_pass.cpp
