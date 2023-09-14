@@ -35,6 +35,7 @@ class InstBasicBlockTracePass : public Pass {
 
  private:
   void labelBasicBlocks();
+  uint32_t getStride4UIntRuntimeArrayTypeId();
   uint32_t getBasicBlockTraceBufferId();
   uint32_t getPtrStorageBufferRuntimeArrayUIntTypeId();
 
@@ -51,6 +52,7 @@ class InstBasicBlockTracePass : public Pass {
 
   uint32_t basicBlockTraceBufferId = 0;
   uint32_t ptrStorageBufferRuntimeArrayUIntTypeId = 0;
+  uint32_t stride4UIntRuntimeArrayTypeId = 0;
 };
 
 }  // namespace opt

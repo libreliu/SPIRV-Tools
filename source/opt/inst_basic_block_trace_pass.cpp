@@ -100,6 +100,17 @@ Pass::Status InstBasicBlockTracePass::Process() {
             // empty bb is not conforming to spir-v specification
             assert(false);
             continue;
+          } 
+          
+          // All OpVariable instructions in a function
+          // must be the first instructions in the first block
+          while (bbStartPos != bb.end() && bbStartPos->opcode() == spv::Op::OpVariable) {
+            ++bbStartPos;
+          }
+
+          // This seems legal
+          if (bbStartPos == bb.end()) {
+            continue;
           }
 
           changed = true;
@@ -181,8 +192,12 @@ uint32_t InstBasicBlockTracePass::getBasicBlockTraceBufferId() {
 
   analysis::Integer tyUint(32, false);
 
-  // TODO: annotate uint offset?
+
   analysis::RuntimeArray tyRuntimeArray(&tyUint);
+  
+  // annotate uint offset
+  tyRuntimeArray.AddDecoration({6, 4});
+
   analysis::Struct tyStruct({&tyRuntimeArray});
 
   uint32_t traceBufferTypeId = typeMgr->GetTypeInstruction(&tyStruct);
@@ -265,6 +280,27 @@ uint32_t InstBasicBlockTracePass::getPtrStorageBufferRuntimeArrayUIntTypeId() {
 
   ptrStorageBufferRuntimeArrayUIntTypeId = resultId;
   return resultId;
+}
+
+uint32_t InstBasicBlockTracePass::getStride4UIntRuntimeArrayTypeId() {
+  if (stride4UIntRuntimeArrayTypeId != 0) {
+    return stride4UIntRuntimeArrayTypeId;
+  }
+
+  auto *typeMgr = context()->get_type_mgr();
+
+  analysis::Integer tyUint(32, false);
+  analysis::RuntimeArray tyRuntimeArray(&tyUint);
+
+  // this is ugly, but just works?
+  // - since type comparisons are aware of this
+  // See spvtools::opt::TypeManager::AttachDecoration on how things get converted
+  // OpDecorate %_runtimearr_uint ArrayStride 4
+  tyRuntimeArray.AddDecoration({6, 4});
+  
+  stride4UIntRuntimeArrayTypeId = typeMgr->GetTypeInstruction(&tyRuntimeArray);
+  assert(stride4UIntRuntimeArrayTypeId != 0);
+  return stride4UIntRuntimeArrayTypeId;
 }
 
 void InstBasicBlockTracePass::registerBasicBlockCountRetrievalCallback(
