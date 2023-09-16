@@ -45,6 +45,7 @@ namespace opt {
 // OpAccessChain %_ptr_StorageBuffer_uint %basicBlockTraceBuffer %int_0 %int_233
 // OpStore %32 %31
 
+// Per-invocation version; TODO: fix this
 // #version 450
 // layout (location = 0) out vec4 outFragColor;
 // layout(std430, set = 5, binding = 1) buffer basicBlockTraceBufferType {
@@ -54,6 +55,18 @@ namespace opt {
 // {
 //     int index = int(gl_FragCoord.x * 1000);
 //     basicBlockTraceBuffer.counters[233] += 1;
+// }
+
+
+// Uni-invocation version
+// #version 450
+// layout (location = 0) out vec4 outFragColor;
+// layout(std430, set = 5, binding = 1) buffer basicBlockTraceBufferType {
+//     uint counters[];
+// } basicBlockTraceBuffer;
+// void main()
+// {
+//     atomicAdd(basicBlockTraceBuffer.counters[233], 1);
 // }
 
 // 1. give all (original) bb a corresponding idx
@@ -120,7 +133,7 @@ Pass::Status InstBasicBlockTracePass::Process() {
           uint32_t bbTraceIdxConstId = constMgr->GetUIntConstId(bbTraceIdx);
 
           uint32_t counterPointerId = TakeNextId();
-          uint32_t counterValId = TakeNextId();
+          // uint32_t counterValId = TakeNextId();
           uint32_t counterIncValId = TakeNextId();
 
           std::vector<std::unique_ptr<Instruction>> traceInsts;
@@ -132,23 +145,33 @@ Pass::Status InstBasicBlockTracePass::Process() {
                       {SPV_OPERAND_TYPE_ID, {bbTraceBufferId}},
                       {SPV_OPERAND_TYPE_ID, {UIntConstZeroId}},
                       {SPV_OPERAND_TYPE_ID, {bbTraceIdxConstId}}}));
+
           traceInsts.push_back(std::make_unique<Instruction>(
-                  context(), spv::Op::OpLoad, /* ty_id */ tyUint,
-                  /* result_id */ counterValId,
-                  std::initializer_list<Operand>{
-                      {SPV_OPERAND_TYPE_ID, {counterPointerId}}}));
-          traceInsts.push_back(std::make_unique<Instruction>(
-                  context(), spv::Op::OpIAdd, /* ty_id */ tyUint,
+                  context(), spv::Op::OpAtomicIAdd, /* ty_id */ tyUint,
                   /* result_id */ counterIncValId,
                   std::initializer_list<Operand>{
-                      {SPV_OPERAND_TYPE_ID, {counterValId}},
-                      {SPV_OPERAND_TYPE_ID, {UIntConstOneId}}}));
-          traceInsts.push_back(std::make_unique<Instruction>(
-                  context(), spv::Op::OpStore, /* ty_id */ 0,
-                  /* result_id */ 0,
-                  std::initializer_list<Operand>{
                       {SPV_OPERAND_TYPE_ID, {counterPointerId}},
-                      {SPV_OPERAND_TYPE_ID, {counterIncValId}}}));
+                      /* memory scope id */{SPV_OPERAND_TYPE_SCOPE_ID, {UIntConstOneId}},
+                      /* memory semantics id */{SPV_OPERAND_TYPE_MEMORY_SEMANTICS_ID, {UIntConstZeroId}},
+                      /* val id */{SPV_OPERAND_TYPE_ID, {UIntConstOneId}}}));
+
+          // traceInsts.push_back(std::make_unique<Instruction>(
+          //         context(), spv::Op::OpLoad, /* ty_id */ tyUint,
+          //         /* result_id */ counterValId,
+          //         std::initializer_list<Operand>{
+          //             {SPV_OPERAND_TYPE_ID, {counterPointerId}}}));
+          // traceInsts.push_back(std::make_unique<Instruction>(
+          //         context(), spv::Op::OpIAdd, /* ty_id */ tyUint,
+          //         /* result_id */ counterIncValId,
+          //         std::initializer_list<Operand>{
+          //             {SPV_OPERAND_TYPE_ID, {counterValId}},
+          //             {SPV_OPERAND_TYPE_ID, {UIntConstOneId}}}));
+          // traceInsts.push_back(std::make_unique<Instruction>(
+          //         context(), spv::Op::OpStore, /* ty_id */ 0,
+          //         /* result_id */ 0,
+          //         std::initializer_list<Operand>{
+          //             {SPV_OPERAND_TYPE_ID, {counterPointerId}},
+          //             {SPV_OPERAND_TYPE_ID, {counterIncValId}}}));
 
           bbStartPos.InsertBefore(std::move(traceInsts));
         }

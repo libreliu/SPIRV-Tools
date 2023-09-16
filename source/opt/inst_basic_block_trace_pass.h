@@ -41,8 +41,8 @@ class InstBasicBlockTracePass : public Pass {
 
   const int kTraceBufferDescriptorSet = 5;
   const int kTraceBufferBinding = 1;
-  bool storageBufferExtDefined = false;
 
+  bool storageBufferExtDefined = false;
   void addStorageBufferExt();
 
   std::map<int, int> origLabelToTraceIdx;
