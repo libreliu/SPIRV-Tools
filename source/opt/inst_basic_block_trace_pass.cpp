@@ -165,7 +165,11 @@ Pass::Status InstBasicBlockTracePass::Process() {
           
           // All OpVariable instructions in a function
           // must be the first instructions in the first block
-          while (bbStartPos != bb.end() && bbStartPos->opcode() == spv::Op::OpVariable) {
+          // Also, OpPhi must be immediate successor to OpLabel
+          while (bbStartPos != bb.end() && (
+              bbStartPos->opcode() == spv::Op::OpVariable ||
+              bbStartPos->opcode() == spv::Op::OpPhi
+            )) {
             ++bbStartPos;
           }
 
