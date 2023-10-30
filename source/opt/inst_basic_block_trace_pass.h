@@ -18,6 +18,8 @@ namespace opt {
 
 class InstBasicBlockTracePass : public Pass {
  public:
+  explicit inline InstBasicBlockTracePass(bool u64TraceEnabled): traceWithU64(u64TraceEnabled) {}
+
   const char* name() const override { return "inst-basic-block-trace"; }
   Status Process() override;
 
@@ -37,13 +39,17 @@ class InstBasicBlockTracePass : public Pass {
   void labelBasicBlocks();
   uint32_t getStride4UIntRuntimeArrayTypeId();
   uint32_t getBasicBlockTraceBufferId();
-  uint32_t getPtrStorageBufferRuntimeArrayUIntTypeId();
+  uint32_t getPtrStorageBufferRuntimeArrayTypeId();
 
   const int kTraceBufferDescriptorSet = 5;
   const int kTraceBufferBinding = 1;
 
   bool storageBufferExtDefined = false;
   void addStorageBufferExt();
+  bool int64CapsDefined = false;
+  void addInt64Caps();
+
+  bool traceWithU64;
 
   std::map<int, int> origLabelToTraceIdx;
 
@@ -51,7 +57,7 @@ class InstBasicBlockTracePass : public Pass {
   std::function<void(const std::map<int, int> *)> basicBlockCorrespondenceCallbackFn;
 
   uint32_t basicBlockTraceBufferId = 0;
-  uint32_t ptrStorageBufferRuntimeArrayUIntTypeId = 0;
+  uint32_t ptrStorageBufferRuntimeArrayTypeId = 0;
   uint32_t stride4UIntRuntimeArrayTypeId = 0;
 };
 

@@ -4,6 +4,7 @@
 #include <memory>
 #include <stdexcept>
 
+#include "source/opcode.h"
 #include "source/opt/function.h"
 #include "source/opt/instruction.h"
 #include "source/opt/pass.h"
@@ -69,6 +70,37 @@ namespace opt {
 //     atomicAdd(basicBlockTraceBuffer.counters[233], 1);
 // }
 
+// U64 version
+// #version 450
+// #extension GL_ARB_gpu_shader_int64 : require
+// #extension GL_EXT_shader_atomic_int64 : require
+// layout (location = 0) out vec4 outFragColor;
+// layout(std430, set = 5, binding = 1) buffer basicBlockTraceBufferType {
+//     uint64_t counters[];
+// } basicBlockTraceBuffer;
+// void main()
+// {
+//     atomicAdd(basicBlockTraceBuffer.counters[233], 1);
+// }
+
+// Differences:
+// ## Decorations ##
+// OpDecorate %_runtimearr_ulong ArrayStride 8
+// OpMemberDecorate %basicBlockTraceBufferType 0 Offset 0
+// OpDecorate %basicBlockTraceBufferType Block
+// OpDecorate %basicBlockTraceBuffer DescriptorSet 5
+// OpDecorate %basicBlockTraceBuffer Binding 1
+
+// ## Type annotations ##
+// %ulong = OpTypeInt 64 0
+// %_runtimearr_ulong = OpTypeRuntimeArray %ulong
+// %basicBlockTraceBufferType = OpTypeStruct %_runtimearr_ulong
+// %_ptr_StorageBuffer_ulong = OpTypePointer StorageBuffer %ulong
+
+// ## Function ##
+// %15 = OpAccessChain %_ptr_StorageBuffer_ulong %basicBlockTraceBuffer %int_0 %int_233
+// %20 = OpAtomicIAdd %ulong %15 %uint_1 %uint_0 %ulong_1
+
 // 1. give all (original) bb a corresponding idx
 // 2. instrument
 // 2.1 instrument new storage buffer slot
@@ -91,8 +123,8 @@ Pass::Status InstBasicBlockTracePass::Process() {
   // iterate over basic blocks; insert onto the top of the basic block
   ProcessFunction pfn =
       [this, bbTraceBufferId,
-       ptrStorageBufferUint =
-           this->getPtrStorageBufferRuntimeArrayUIntTypeId()](Function* fp) {
+       ptrStorageBufferUintOrUlong =
+           this->getPtrStorageBufferRuntimeArrayTypeId()](Function* fp) {
         auto* constMgr = context()->get_constant_mgr();
         auto* typeMgr = context()->get_type_mgr();
 
@@ -101,6 +133,22 @@ Pass::Status InstBasicBlockTracePass::Process() {
         // used for "+1"
         uint32_t UIntConstOneId = constMgr->GetUIntConstId(1);
         uint32_t tyUint = typeMgr->GetUIntTypeId();
+        uint32_t tyUlong = 0;
+        if (traceWithU64) {
+          analysis::Integer uint64_type(64, false);
+          analysis::Type* uint_type = context()->get_type_mgr()->GetRegisteredType(&uint64_type);
+
+          tyUlong = typeMgr->GetTypeInstruction(uint_type);
+        }
+
+        uint32_t ULongConstOneId = 0;
+        if (traceWithU64) {
+          analysis::Integer uint64_type(64, false);
+
+          analysis::Type* uint_type = context()->get_type_mgr()->GetRegisteredType(&uint64_type);
+          auto c = constMgr->GetConstant(uint_type, {1, 0});
+          ULongConstOneId = constMgr->GetDefiningInstruction(c)->result_id();
+        }
 
         bool changed = false;
 
@@ -139,21 +187,32 @@ Pass::Status InstBasicBlockTracePass::Process() {
           std::vector<std::unique_ptr<Instruction>> traceInsts;
           traceInsts.push_back(std::make_unique<Instruction>(
                   context(), spv::Op::OpAccessChain,
-                  /* ty_id */ ptrStorageBufferUint,
+                  /* ty_id */ ptrStorageBufferUintOrUlong,
                   /* result_id */ counterPointerId,
                   std::initializer_list<Operand>{
                       {SPV_OPERAND_TYPE_ID, {bbTraceBufferId}},
                       {SPV_OPERAND_TYPE_ID, {UIntConstZeroId}},
                       {SPV_OPERAND_TYPE_ID, {bbTraceIdxConstId}}}));
 
-          traceInsts.push_back(std::make_unique<Instruction>(
-                  context(), spv::Op::OpAtomicIAdd, /* ty_id */ tyUint,
-                  /* result_id */ counterIncValId,
-                  std::initializer_list<Operand>{
-                      {SPV_OPERAND_TYPE_ID, {counterPointerId}},
-                      /* memory scope id */{SPV_OPERAND_TYPE_SCOPE_ID, {UIntConstOneId}},
-                      /* memory semantics id */{SPV_OPERAND_TYPE_MEMORY_SEMANTICS_ID, {UIntConstZeroId}},
-                      /* val id */{SPV_OPERAND_TYPE_ID, {UIntConstOneId}}}));
+          if (traceWithU64) {
+            traceInsts.push_back(std::make_unique<Instruction>(
+                context(), spv::Op::OpAtomicIAdd, /* ty_id */ tyUlong,
+                /* result_id */ counterIncValId,
+                std::initializer_list<Operand>{
+                    {SPV_OPERAND_TYPE_ID, {counterPointerId}},
+                    /* memory scope id */{SPV_OPERAND_TYPE_SCOPE_ID, {UIntConstOneId}},
+                    /* memory semantics id */{SPV_OPERAND_TYPE_MEMORY_SEMANTICS_ID, {UIntConstZeroId}},
+                    /* val id */{SPV_OPERAND_TYPE_ID, {ULongConstOneId}}}));
+          } else {
+            traceInsts.push_back(std::make_unique<Instruction>(
+                context(), spv::Op::OpAtomicIAdd, /* ty_id */ tyUint,
+                /* result_id */ counterIncValId,
+                std::initializer_list<Operand>{
+                    {SPV_OPERAND_TYPE_ID, {counterPointerId}},
+                    /* memory scope id */{SPV_OPERAND_TYPE_SCOPE_ID, {UIntConstOneId}},
+                    /* memory semantics id */{SPV_OPERAND_TYPE_MEMORY_SEMANTICS_ID, {UIntConstZeroId}},
+                    /* val id */{SPV_OPERAND_TYPE_ID, {UIntConstOneId}}}));
+          }
 
           // traceInsts.push_back(std::make_unique<Instruction>(
           //         context(), spv::Op::OpLoad, /* ty_id */ tyUint,
@@ -213,20 +272,34 @@ uint32_t InstBasicBlockTracePass::getBasicBlockTraceBufferId() {
   analysis::DecorationManager* decoMgr = get_decoration_mgr();
   analysis::TypeManager* typeMgr = context()->get_type_mgr();
 
-  analysis::Integer tyUint(32, false);
+  std::unique_ptr<analysis::Integer> tyUint;
+  if (traceWithU64) {
+    tyUint = std::make_unique<analysis::Integer>(64, false);
+  } else {
+    tyUint = std::make_unique<analysis::Integer>(32, false);
+  }
 
-
-  analysis::RuntimeArray tyRuntimeArray(&tyUint);
+  analysis::RuntimeArray tyRuntimeArray(tyUint.get());
   
   // annotate uint offset
-  tyRuntimeArray.AddDecoration({6, 4});
+  // 6 - ArrayStride; 4 - the stride value
+  if (traceWithU64) {
+    tyRuntimeArray.AddDecoration({6, 8});
+  } else {
+    tyRuntimeArray.AddDecoration({6, 4});
+  }
 
   analysis::Struct tyStruct({&tyRuntimeArray});
 
   uint32_t traceBufferTypeId = typeMgr->GetTypeInstruction(&tyStruct);
   assert(traceBufferTypeId != 0);
-  assert(context()->get_def_use_mgr()->NumUses(traceBufferTypeId) == 0 &&
-         "used struct type returned");
+
+  // This is possible depending on SPIR-V input, so move from assertion
+  // to runtime check
+  if (context()->get_def_use_mgr()->NumUses(traceBufferTypeId) == 0) {
+    // We have runtime exceptions disabled...
+    assert("used struct type returned");
+  }
 
   decoMgr->AddDecoration(traceBufferTypeId, uint32_t(spv::Decoration::Block));
   decoMgr->AddMemberDecoration(traceBufferTypeId, 0,
@@ -267,8 +340,18 @@ uint32_t InstBasicBlockTracePass::getBasicBlockTraceBufferId() {
   decoMgr->AddDecorationVal(traceBufferId, uint32_t(spv::Decoration::Binding),
                             kTraceBufferBinding);
   addStorageBufferExt();
+  if (traceWithU64) {
+    // TODO: check if we need
+    // - OpSourceExtension "GL_ARB_gpu_shader_int64"
+    // - OpSourceExtension "GL_EXT_shader_atomic_int64"
+    addInt64Caps();
+  }
 
-  // TODO: figure out why is it useful
+  // Before version 1.4, the interface’s storage classes are limited to the 
+  // Input and Output storage classes. Starting with version 1.4, the 
+  // interface’s storage classes are all storage classes used in declaring
+  // all global variables referenced by the entry point’s call tree.
+  //
   // this is copied from spvtools::opt::InstrumentPass::GetOutputBufferId
   if (get_module()->version() >= SPV_SPIRV_VERSION_WORD(1, 4)) {
     // Add the new buffer to all entry points.
@@ -291,17 +374,39 @@ void InstBasicBlockTracePass::addStorageBufferExt() {
   storageBufferExtDefined = true;
 }
 
-uint32_t InstBasicBlockTracePass::getPtrStorageBufferRuntimeArrayUIntTypeId() {
-  if (ptrStorageBufferRuntimeArrayUIntTypeId != 0) {
-    return ptrStorageBufferRuntimeArrayUIntTypeId;
+void InstBasicBlockTracePass::addInt64Caps() {
+  if (int64CapsDefined) return;
+  if (!get_feature_mgr()->HasCapability(spv::Capability::Int64)) {
+    context()->AddCapability(spv::Capability::Int64);
+  }
+  if (!get_feature_mgr()->HasCapability(spv::Capability::Int64Atomics)) {
+    context()->AddCapability(spv::Capability::Int64Atomics);
+  }
+  int64CapsDefined = true;
+}
+
+uint32_t InstBasicBlockTracePass::getPtrStorageBufferRuntimeArrayTypeId() {
+  if (ptrStorageBufferRuntimeArrayTypeId != 0) {
+    return ptrStorageBufferRuntimeArrayTypeId;
+  }
+
+  uint32_t uintTypeId = 0;
+  if (traceWithU64) {
+    auto* typeMgr = context()->get_type_mgr();
+
+    analysis::Integer uint64_type(64, false);
+    analysis::Type *uint64TypeObj = typeMgr->GetRegisteredType(&uint64_type);
+    uintTypeId = typeMgr->GetTypeInstruction(uint64TypeObj);
+  } else {
+    uintTypeId = context()->get_type_mgr()->GetUIntTypeId();
   }
 
   auto* typeMgr = context()->get_type_mgr();
   uint32_t resultId = typeMgr->FindPointerToType(
-      typeMgr->GetUIntTypeId(), spv::StorageClass::StorageBuffer);
+      uintTypeId, spv::StorageClass::StorageBuffer);
   assert(resultId != 0 && "Could not create desired pointer type");
 
-  ptrStorageBufferRuntimeArrayUIntTypeId = resultId;
+  ptrStorageBufferRuntimeArrayTypeId = resultId;
   return resultId;
 }
 
